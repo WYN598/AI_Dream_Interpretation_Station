@@ -103,7 +103,7 @@ async def chat_with_ai(user_input, history, phase):
     history = history + [user_message, assistant_message]
     partial_text = ""
 
-    # 这里是关键！！！打字机模拟：逐字符输出
+    # 打字机模拟：逐字符输出
     for char in response:
         partial_text += char
         new_history = history.copy()
@@ -157,6 +157,8 @@ def generate_dream_image_with_loading():
 custom_theme = gr.themes.Base()
 
 with gr.Blocks(theme=custom_theme, css="""
+@import url('https://fonts.googleapis.com/css2?family=Caveat&display=swap');
+
 body {
   background: linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%);
   background-attachment: fixed;
@@ -200,7 +202,34 @@ body {
   box-shadow: none !important;
 }
 
+/* 放大Chatbot的头像 */
+# #chatbox .avatar-container {
+#     width: 60px !important;
+#     height: 60px !important;
+# 
+# }
+# #chatbox .avatar-image {
+#     width: auto !important;
+#     height: auto !important;
+# }
+#chatbox .avatar-container {
+    width: 70px !important;
+    height: 70px !important;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, rgba(0,0,0,0) 70%);
+    box-shadow: 0 0 10px 2px rgba(173, 216, 230, 0.6),
+                0 0 20px 6px rgba(173, 216, 230, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 
+#chatbox .avatar-image {
+    width: 95% !important;
+    height: 95% !important;
+    object-fit: cover !important;
+    border-radius: 50%;
+}
 
 
 @keyframes fadeIn {
@@ -264,6 +293,14 @@ input[type="text"]::placeholder {
   color: #ddd;
 }
 
+
+
+#chatbox button[aria-label="Clear"] {
+    display: none !important;
+}
+
+
+
 """) as demo:
     state = gr.State("chat")
     gr.Markdown(
@@ -275,19 +312,21 @@ input[type="text"]::placeholder {
         gr.Markdown("<h2 style='text-align:center;'>Let's do some casual chat first~</h2>")
         chatbot_chat = gr.Chatbot(
             elem_id="chatbox",
-            value=[{"role": "assistant", "content":
-                "Hello there~ I'm Makima! Welcome to our dream world. "
-                "Before we start exploring your dreams, how about chatting with me for a while? "
-                "I'd love to hear about your recent life, your little worries, or anything you'd like to share. "
-                "And if you ever feel like moving on, just click 'Next,' my friend will be there to help you with the "
-                "next part"
-                "Take it easy, I'm right here with you 🌸"
-                    }],
+            value=[{"role": "assistant", "content": "Hi, I'm Makima. Welcome to our dream journey!  Before we dive "
+                                                    "into dream interpretation, let's have a little chat first.  Tell "
+                                                    "me about your recent life — anything that's been on your mind "
+                                                    "lately?  If at any point you feel ready to move on, just click "
+                                                    "'Next' and my colleague will guide you through the next step.  "
+                                                    "Take your time, I'm here to listen."},
+                   ],
 
             avatar_images=(None, "imgs/ai_head.jpg"),
             type="messages",
             autoscroll=True,
             height=650,
+            show_label=False,
+
+
 
         )
         with gr.Column(elem_classes="input-container"):
@@ -301,7 +340,7 @@ input[type="text"]::placeholder {
         gr.Markdown("<h2 style='text-align:center;'>Time to describe your dreams</h2>")
         chatbot_dream = gr.Chatbot(
             elem_id="chatbox",
-            value=[{"role": "assistant", "content": "Hello~ I'm Mai Sakurajima! 🌸  Makima told me a little about you "
+            value=[{"role": "assistant", "content": "Hello~ I'm Mai Sakurajima!  Makima told me a little about you "
                                                     "just now~  Now, it's my turn to "
                                                     "listen to your dreams.  Could you describe a recent dream that "
                                                     "you remember vividly?  Don't worry, I'm here with you, "
@@ -310,6 +349,7 @@ input[type="text"]::placeholder {
             type="messages",
             autoscroll=True,
             height=650,
+            show_label=False,
         )
 
         with gr.Column(elem_classes="input-container"):
@@ -321,8 +361,33 @@ input[type="text"]::placeholder {
             next_to_generate = gr.Button("Next")
 
     with gr.Column(elem_classes="container fade-in", visible=False) as generate_container:
-        gr.Markdown("<h2 style='text-align:center;'>Save your dreams!</h2>")
-        gr.Markdown("I will automatically generate art images based on your dream description.")
+        gr.Markdown("""
+            <h2 style="text-align:center; 
+                       font-size:2.2rem; 
+                       background: linear-gradient(90deg, #7f8c8d, #95a5a6);
+                       -webkit-background-clip: text;
+                       -webkit-text-fill-color: transparent;
+                       font-family: 'Caveat', cursive;
+                       font-weight: 600;
+                       letter-spacing: 1px;
+                       margin-bottom: 0.5rem;">
+                Thank you for participating in this dream interpretation~
+            </h2>
+        """)
+        gr.Markdown("""
+            <h2 style="text-align:center; 
+                       font-size:1.8rem; 
+                       background: linear-gradient(90deg, #6c5ce7, #a29bfe);
+                       -webkit-background-clip: text;
+                       -webkit-text-fill-color: transparent;
+                       font-family: 'Caveat', cursive;
+                       font-weight: 600;
+                       letter-spacing: 1px;
+                       margin-top: 0.5rem;">
+                Click below to generate your dream painting 🌙
+            </h2>
+        """)
+
         generate_button = gr.Button("Click to generate a dream image", variant="primary")
         output_image = gr.Image()
         back_to_dream = gr.Button("Back to Chat")

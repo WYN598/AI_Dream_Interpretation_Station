@@ -157,6 +157,8 @@ def generate_dream_image_with_loading():
 custom_theme = gr.themes.Base()
 
 with gr.Blocks(theme=custom_theme, css="""
+@import url('https://fonts.googleapis.com/css2?family=Caveat&display=swap');
+
 body {
   background: linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%);
   background-attachment: fixed;
@@ -291,6 +293,14 @@ input[type="text"]::placeholder {
   color: #ddd;
 }
 
+
+
+#chatbox button[aria-label="Clear"] {
+    display: none !important;
+}
+
+
+
 """) as demo:
     state = gr.State("chat")
     gr.Markdown(
@@ -314,6 +324,9 @@ input[type="text"]::placeholder {
             type="messages",
             autoscroll=True,
             height=650,
+            show_label=False,
+
+
 
         )
         with gr.Column(elem_classes="input-container"):
@@ -336,6 +349,7 @@ input[type="text"]::placeholder {
             type="messages",
             autoscroll=True,
             height=650,
+            show_label=False,
         )
 
         with gr.Column(elem_classes="input-container"):
@@ -347,8 +361,33 @@ input[type="text"]::placeholder {
             next_to_generate = gr.Button("Next")
 
     with gr.Column(elem_classes="container fade-in", visible=False) as generate_container:
-        gr.Markdown("<h2 style='text-align:center;'>Save your dreams!</h2>")
-        gr.Markdown("I will automatically generate art images based on your dream description.")
+        gr.Markdown("""
+            <h2 style="text-align:center; 
+                       font-size:2.2rem; 
+                       background: linear-gradient(90deg, #7f8c8d, #95a5a6);
+                       -webkit-background-clip: text;
+                       -webkit-text-fill-color: transparent;
+                       font-family: 'Caveat', cursive;
+                       font-weight: 600;
+                       letter-spacing: 1px;
+                       margin-bottom: 0.5rem;">
+                Thank you for participating in this dream interpretation~
+            </h2>
+        """)
+        gr.Markdown("""
+            <h2 style="text-align:center; 
+                       font-size:1.8rem; 
+                       background: linear-gradient(90deg, #6c5ce7, #a29bfe);
+                       -webkit-background-clip: text;
+                       -webkit-text-fill-color: transparent;
+                       font-family: 'Caveat', cursive;
+                       font-weight: 600;
+                       letter-spacing: 1px;
+                       margin-top: 0.5rem;">
+                Click below to generate your dream painting 🌙
+            </h2>
+        """)
+
         generate_button = gr.Button("Click to generate a dream image", variant="primary")
         output_image = gr.Image()
         back_to_dream = gr.Button("Back to Chat")
