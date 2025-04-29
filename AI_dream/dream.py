@@ -320,7 +320,7 @@ input[type="text"]::placeholder {
                                                     "Take your time, I'm here to listen."},
                    ],
 
-            avatar_images=(None, "imgs/ai_head.jpg"),
+            avatar_images=(None, "./imgs/ai_head.jpg"),
             type="messages",
             autoscroll=True,
             height=650,

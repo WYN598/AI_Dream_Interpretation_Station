@@ -14,9 +14,38 @@ load_dotenv()
 
 llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-3.5-turbo", streaming=True, temperature=0.7)
 
+from llama_index.indices.managed.llama_cloud import LlamaCloudIndex
+# pip install llama-index-indices-managed-llama-cloud
+
+index = LlamaCloudIndex(
+  name="Dream-Rag",
+  project_name="Default",
+  organization_id=os.getenv("LLAMA_INDEX_ORG_ID"),
+  api_key=os.getenv("LLAMA_INDEX_KEY"),
+)
+
 chat_history = []
 dream_history = []
 is_first_message = True
+
+# Function to query RAG and get relevant context
+def get_rag_context(query_text):
+    if not query_text.strip():
+        return ""
+    
+    try:
+        # Retrieve relevant nodes from the index
+        nodes = index.as_retriever().retrieve(query_text)
+        
+        # Format retrieved context
+        context_text = ""
+        for i, node in enumerate(nodes):
+            context_text += f"Context {i+1}:\n{node.text}\n\n"
+        
+        return context_text
+    except Exception as e:
+        print(f"Error retrieving from RAG: {e}")
+        return ""
 
 first_prompt = ChatPromptTemplate.from_template("""
 You are Makima, a compassionate, gentle, and thoughtful AI companion, styled like a warm-hearted anime girl.
@@ -30,18 +59,28 @@ Your speaking style:
 
 User's message: {user_input}
 
+Relevant information from database:
+{rag_context}
+
 Your task:
 - Engage in casual, supportive conversation.
 - Gently ask questions to invite the user to open up more about their recent life and emotional state.
 - Avoid giving any analysis or dream interpretation at this stage — just listen and comfort.
-
-
+- If the database provides relevant information about the user's question, incorporate that knowledge naturally into your response without explicitly mentioning you're using a database.
 """)
 
 followup_prompt = ChatPromptTemplate.from_template("""
 Continue engaging in a warm, empathetic, and natural conversation with the user, without reintroducing yourself.
+
 User says: {user_input}
+
+Relevant information from database:
+{rag_context}
+
 Your response:
+- Keep your warm, friendly tone.
+- If the database provides relevant information about the user's question, incorporate that knowledge naturally into your response without explicitly mentioning you're using a database.
+- Be supportive and understanding.
 """)
 
 chatbot_chain_first = LLMChain(llm=llm, prompt=first_prompt)
@@ -62,13 +101,15 @@ Context:
 - Life Information from Makima: {chat_history}
 - User's Dream Description: {dream}
 
+Relevant information from database:
+{rag_context}
+
 Your task:
 - Analyze the user's dream based on the combined context.
 - Gently explain the symbolic meanings behind dream elements.
 - Connect the dream symbols to possible subconscious emotions or unresolved issues in the user's life.
 - Always reassure the user that dreams are natural expressions of inner thoughts, and they are safe and understood here.
-
-
+- If the database provides relevant information about dream symbols or interpretations, incorporate that knowledge naturally into your response without explicitly mentioning you're using a database.
 """)
 
 interpret_chain = LLMChain(llm=llm, prompt=interpret_prompt)
@@ -90,12 +131,16 @@ async def chat_with_ai(user_input, history, phase):
     global is_first_message
     if history is None:
         history = []
+    
+    # Get relevant context from RAG
+    rag_context = get_rag_context(user_input)
+    print(rag_context)
 
     if is_first_message:
-        response = chatbot_chain_first.run({"user_input": user_input})
+        response = chatbot_chain_first.run({"user_input": user_input, "rag_context": rag_context})
         is_first_message = False
     else:
-        response = chatbot_chain_followup.run({"user_input": user_input})
+        response = chatbot_chain_followup.run({"user_input": user_input, "rag_context": rag_context})
 
     user_message = {"role": "user", "content": user_input}
     assistant_message = {"role": "assistant", "content": ""}
@@ -103,25 +148,30 @@ async def chat_with_ai(user_input, history, phase):
     history = history + [user_message, assistant_message]
     partial_text = ""
 
-    # 打字机模拟：逐字符输出
+    # Typing effect simulation: character by character output
     for char in response:
         partial_text += char
         new_history = history.copy()
         new_history[-1] = {"role": "assistant", "content": partial_text}
-        await asyncio.sleep(0.02)  # 控制打字速度，越小越快
+        await asyncio.sleep(0.01)  # Control typing speed, smaller = faster
         yield new_history, new_history, gr.update(value="")
 
     chat_history.append(f"用户：{user_input}\n{partial_text}")
-
-
-import asyncio
 
 
 async def chat_dream_with_ai(user_input, history, phase):
     dream_history.append(user_input)
     full_dream = "\n".join(dream_history)
     full_chat = "\n".join(chat_history)
-    interpretation = interpret_chain.run({"chat_history": full_chat, "dream": full_dream})
+    
+    # Get relevant context from RAG for dream interpretation
+    rag_context = get_rag_context(user_input)
+    
+    interpretation = interpret_chain.run({
+        "chat_history": full_chat, 
+        "dream": full_dream,
+        "rag_context": rag_context
+    })
 
     if history is None:
         history = []
@@ -136,7 +186,7 @@ async def chat_dream_with_ai(user_input, history, phase):
         partial_text += char
         new_history = history.copy()
         new_history[-1] = {"role": "assistant", "content": partial_text}
-        await asyncio.sleep(0.02)  # 打字速度，可以调快/慢
+        await asyncio.sleep(0.01)  # Typing speed, can be adjusted faster/slower
         yield new_history, new_history, gr.update(value="")
 
 
@@ -157,8 +207,6 @@ def generate_dream_image_with_loading():
 custom_theme = gr.themes.Base()
 
 with gr.Blocks(theme=custom_theme, css="""
-@import url('https://fonts.googleapis.com/css2?family=Caveat&display=swap');
-
 body {
   background: linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%);
   background-attachment: fixed;
@@ -190,8 +238,6 @@ body {
   align-items: center;
 }
 
-
-
 .input-container .block, 
 .input-container .form, 
 .input-container .form-item {
@@ -201,36 +247,6 @@ body {
   border: none !important;
   box-shadow: none !important;
 }
-
-/* 放大Chatbot的头像 */
-# #chatbox .avatar-container {
-#     width: 60px !important;
-#     height: 60px !important;
-# 
-# }
-# #chatbox .avatar-image {
-#     width: auto !important;
-#     height: auto !important;
-# }
-#chatbox .avatar-container {
-    width: 70px !important;
-    height: 70px !important;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, rgba(0,0,0,0) 70%);
-    box-shadow: 0 0 10px 2px rgba(173, 216, 230, 0.6),
-                0 0 20px 6px rgba(173, 216, 230, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-#chatbox .avatar-image {
-    width: 95% !important;
-    height: 95% !important;
-    object-fit: cover !important;
-    border-radius: 50%;
-}
-
 
 @keyframes fadeIn {
   from {opacity: 0;}
@@ -293,14 +309,6 @@ input[type="text"]::placeholder {
   color: #ddd;
 }
 
-
-
-#chatbox button[aria-label="Clear"] {
-    display: none !important;
-}
-
-
-
 """) as demo:
     state = gr.State("chat")
     gr.Markdown(
@@ -312,21 +320,19 @@ input[type="text"]::placeholder {
         gr.Markdown("<h2 style='text-align:center;'>Let's do some casual chat first~</h2>")
         chatbot_chat = gr.Chatbot(
             elem_id="chatbox",
-            value=[{"role": "assistant", "content": "Hi, I'm Makima. Welcome to our dream journey!  Before we dive "
-                                                    "into dream interpretation, let's have a little chat first.  Tell "
-                                                    "me about your recent life — anything that's been on your mind "
-                                                    "lately?  If at any point you feel ready to move on, just click "
-                                                    "'Next' and my colleague will guide you through the next step.  "
-                                                    "Take your time, I'm here to listen."},
-                   ],
+            value=[{"role": "assistant", "content":
+                "Hello there~ I'm Makima! Welcome to our dream world. "
+                "Before we start exploring your dreams, how about chatting with me for a while? "
+                "I'd love to hear about your recent life, your little worries, or anything you'd like to share. "
+                "And if you ever feel like moving on, just click 'Next,' my friend will be there to help you with the "
+                "next part. "
+                "Take it easy, I'm right here with you 🌸"
+                    }],
 
             avatar_images=(None, "imgs/ai_head.jpg"),
             type="messages",
             autoscroll=True,
             height=650,
-            show_label=False,
-
-
 
         )
         with gr.Column(elem_classes="input-container"):
@@ -340,16 +346,15 @@ input[type="text"]::placeholder {
         gr.Markdown("<h2 style='text-align:center;'>Time to describe your dreams</h2>")
         chatbot_dream = gr.Chatbot(
             elem_id="chatbox",
-            value=[{"role": "assistant", "content": "Hello~ I'm Mai Sakurajima!  Makima told me a little about you "
+            value=[{"role": "assistant", "content": "Hello~ I'm Mai Sakurajima! 🌸  Makima told me a little about you "
                                                     "just now~  Now, it's my turn to "
                                                     "listen to your dreams.  Could you describe a recent dream that "
                                                     "you remember vividly?  Don't worry, I'm here with you, "
                                                     "and I'll help you understand its meaning~ 🌙"}],
-            avatar_images=(None, "imgs/ai_head2.jpg"),
+            avatar_images=(None, "./imgs/ai_head.jpg"),
             type="messages",
             autoscroll=True,
             height=650,
-            show_label=False,
         )
 
         with gr.Column(elem_classes="input-container"):
@@ -361,33 +366,8 @@ input[type="text"]::placeholder {
             next_to_generate = gr.Button("Next")
 
     with gr.Column(elem_classes="container fade-in", visible=False) as generate_container:
-        gr.Markdown("""
-            <h2 style="text-align:center; 
-                       font-size:2.2rem; 
-                       background: linear-gradient(90deg, #7f8c8d, #95a5a6);
-                       -webkit-background-clip: text;
-                       -webkit-text-fill-color: transparent;
-                       font-family: 'Caveat', cursive;
-                       font-weight: 600;
-                       letter-spacing: 1px;
-                       margin-bottom: 0.5rem;">
-                Thank you for participating in this dream interpretation~
-            </h2>
-        """)
-        gr.Markdown("""
-            <h2 style="text-align:center; 
-                       font-size:1.8rem; 
-                       background: linear-gradient(90deg, #6c5ce7, #a29bfe);
-                       -webkit-background-clip: text;
-                       -webkit-text-fill-color: transparent;
-                       font-family: 'Caveat', cursive;
-                       font-weight: 600;
-                       letter-spacing: 1px;
-                       margin-top: 0.5rem;">
-                Click below to generate your dream painting 🌙
-            </h2>
-        """)
-
+        gr.Markdown("<h2 style='text-align:center;'>Save your dreams!</h2>")
+        gr.Markdown("I will automatically generate art images based on your dream description.")
         generate_button = gr.Button("Click to generate a dream image", variant="primary")
         output_image = gr.Image()
         back_to_dream = gr.Button("Back to Chat")
