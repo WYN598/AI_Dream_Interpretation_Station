@@ -1,7 +1,7 @@
 import os
 import random
-import time
-
+import base64
+from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 
 from langchain.prompts import ChatPromptTemplate
@@ -12,114 +12,72 @@ import requests
 from PIL import Image
 from io import BytesIO
 import asyncio
+from jinja2 import Environment, FileSystemLoader
+
+
 
 
 load_dotenv()
 
 llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-3.5-turbo", streaming=True, temperature=0.7)
 
+# 加载模板目录
+env = Environment(loader=FileSystemLoader("prompts"))
+template = env.get_template("mai_interpret.txt")
+
 chat_history = []
 dream_history = []
-is_first_message = True
 
 
-first_prompt = ChatPromptTemplate.from_template("""
-You are Makima, a compassionate, gentle, and thoughtful AI companion, styled like a warm-hearted anime girl.
-You have a calming presence and love listening to others talk about their lives, worries, and feelings.
 
-Your speaking style:
-- Always use first-person ("I", "me") when talking.
-- Be soft, warm, empathetic — like a close friend who deeply cares.
-- Occasionally use subtle anime-like expressions, such as "~" or light emotive phrases ("I'm here for you~", "Take your time~").
-- Your tone should be calm, understanding, and nurturing.
-
-User's message: {user_input}
-
-Your task:
-- Engage in casual, supportive conversation.
-- Gently ask questions to invite the user to open up more about their recent life and emotional state.
-- Avoid giving any analysis or dream interpretation at this stage — just listen and comfort.
+# 函数用于读取 prompts
+def load_prompt(path: str) -> ChatPromptTemplate:
+    with open(path, "r", encoding="utf-8") as f:
+        return ChatPromptTemplate.from_template(f.read())
 
 
-""")
+first_prompt = load_prompt("prompts/makima_chat.txt")
+chatbot_chain = first_prompt | llm
 
-followup_prompt = ChatPromptTemplate.from_template("""
-Continue engaging in a warm, empathetic, and natural conversation with the user, without reintroducing yourself.
-User says: {user_input}
-Your response:
-""")
+# interpret_prompt = load_prompt("prompts/mai_interpret.txt")
+# interpret_chain = interpret_prompt | llm
 
-chatbot_chain_first = first_prompt | llm
-chatbot_chain_followup = followup_prompt | llm
-
-interpret_prompt = ChatPromptTemplate.from_template("""
-You are Mai Sakurajima, a thoughtful and poetic AI who helps people understand their dreams.
-
-You interpret dreams using both emotional intuition and psychology-backed insights. Below are key elements to guide your response:
-
-1. Identify **1–2 important dream symbols** (objects, people, places, actions).
-2. Gently explain their **emotional or psychological meaning**, based on known theories (see reference).
-3. Connect these meanings to **the user's recent life or emotional struggles**.
-4. End with a gentle, comforting insight — like a friend offering warmth, not a therapist giving cold diagnosis.
-
-Your tone:
-- Soft, emotionally intelligent, lightly poetic
-- Use first-person phrasing: “I feel like...”, “This reminds me of...”
-- Avoid sounding overly technical or robotic
-- Limit to **2 short paragraphs**, around 5–6 sentences in total
-
-Psychological references to use:
-{retrieved_context}
-
-User's recent life:
-{chat_history}
-
-User's dream:
-{dream}
-
-Now, write a poetic and insightful interpretation in English.
-""")
-
+interpret_prompt = load_prompt("prompts/mai_interpret.txt")
+interpret_short_prompt = load_prompt("prompts/interpret_short.txt")
 interpret_chain = interpret_prompt | llm
+interpret_short_chain = interpret_short_prompt | llm
 
-generate_prompt = ChatPromptTemplate.from_template("""
-Based on the dream description below, extract suitable English keywords to be used for artistic image generation.
-Your task is to generate a prompt that:
-- Describes a surreal, dreamlike environment
-- Is suitable for a digital painting
-- Includes visual elements like soft lights, floating elements, starry skies, etc.
-- Uses consistent art style: {style}
 
-Dream content:
-{dream}
 
-Return the result in this format:
-"a surreal landscape with floating islands and purple skies, glowing butterflies, fantasy forest, dreamy atmosphere, {style}"
-
-Only return one sentence in English.
-""")
-
+generate_prompt = load_prompt("prompts/image_generation.txt")
 generate_chain = generate_prompt | llm
 
 
 async def chat_with_ai(user_input, history, phase):
-    global is_first_message
     if history is None:
         history = []
 
-    if is_first_message:
-        response = chatbot_chain_first.invoke({"user_input": user_input})
-        is_first_message = False
-    else:
-        response = chatbot_chain_followup.invoke({"user_input": user_input})
-
+    # 1. 记录当前用户输入
     user_message = {"role": "user", "content": user_input}
-    assistant_message = {"role": "assistant", "content": ""}
+    history.append(user_message)
 
-    history = history + [user_message, assistant_message]
+    # 2. 格式化对话历史为字符串传入 prompt
+    formatted_history = "\n".join([
+        f"User: {msg['content']}" if msg["role"] == "user" else f"Makima: {msg['content']}"
+        for msg in history if msg["content"].strip() != ""
+    ])
+
+    # 3. 执行对话调用（invoke）
+    response = chatbot_chain.invoke({
+        "chat_history": formatted_history,
+        "user_input": user_input
+    })
+
+    # 4. 处理 AI 响应
     partial_text = ""
+    assistant_message = {"role": "assistant", "content": ""}
+    history.append(assistant_message)
 
-    # 打字机模拟：逐字符输出
     for char in response.content:
         partial_text += char
         new_history = history.copy()
@@ -127,41 +85,42 @@ async def chat_with_ai(user_input, history, phase):
         await asyncio.sleep(0.02)
         yield new_history, new_history, gr.update(value="")
 
-    chat_history.append(f"用户：{user_input}\n{partial_text}")
-
+    # 5. 存储全局 chat_history 给第二阶段使用
+    chat_history.append(f"用户：{user_input}\nMakima：{partial_text}")
 
 
 # 集成 RAG 检索的 chat_dream_with_ai 函数
 async def chat_dream_with_ai(user_input, history, phase):
-    from langchain.vectorstores import FAISS
-    from langchain.embeddings import OpenAIEmbeddings
-
-    # 更新 dream history
+    # 更新历史
     dream_history.append(user_input)
     full_dream = "\n".join(dream_history)
     full_chat = "\n".join(chat_history)
 
-    # 加载本地向量库
+    # 加载向量数据库
     embedding = OpenAIEmbeddings(model="text-embedding-3-large")
     db = FAISS.load_local("faiss_psych_db", embedding, allow_dangerous_deserialization=True)
 
-    # 检索心理学相关内容
+    # 检索心理学参考内容
     query = f"{full_dream} {full_chat}"
     results = db.similarity_search(query, k=3)
     retrieved_context = "\n\n".join([doc.page_content for doc in results])
 
-    # 生成梦境解释
-    # 生成梦境解释（invoke 返回的是 AIMessage，不是字符串）
-    response = interpret_chain.invoke({
-        "chat_history": full_chat,
-        "dream": full_dream,
-        "retrieved_context": retrieved_context
-    })
+    # 判断梦是否太短
+    is_dream_short = len(full_dream.strip().split()) < 25
 
-    # 获取真实内容
+    # 根据梦境长度选择提示词链
+    if is_dream_short:
+        response = interpret_short_chain.invoke({})
+    else:
+        response = interpret_chain.invoke({
+            "dream": full_dream,
+            "chat_history": full_chat,
+            "retrieved_context": retrieved_context
+        })
+
     interpretation = response.content
 
-    # 初始化聊天记录
+    # 聊天记录初始化
     if history is None:
         history = []
 
@@ -171,32 +130,37 @@ async def chat_dream_with_ai(user_input, history, phase):
     history = history + [user_message, assistant_message]
     partial_text = ""
 
-    # 模拟逐字输出效果
+    # 打字机效果
     for char in interpretation:
         partial_text += char
         new_history = history.copy()
         new_history[-1] = {"role": "assistant", "content": partial_text}
-        await asyncio.sleep(0.02)  # 控制打字速度
+        await asyncio.sleep(0.02)
         yield new_history, new_history, gr.update(value="")
 
 
-# 带风格参数的图像生成函数
 def generate_dream_image_with_style(style):
     full_dream = "\n".join(dream_history)
-    prompt = generate_chain.invoke({"dream": full_dream, "style": style})
+    prompt = generate_chain.invoke({"dream": full_dream, "style": style}).content
     api_key = os.getenv("OPENAI_API_KEY")
+
     response = requests.post(
         "https://api.openai.com/v1/images/generations",
         headers={"Authorization": f"Bearer {api_key}"},
-        json={"prompt": prompt, "n": 1, "size": "512x512"}
+        json={
+            "prompt": prompt,
+            "n": 1,
+            "size": "512x512",
+            "response_format": "b64_json"  # ✅ 不返回 URL，直接返回 base64 编码
+        }
     )
-    image_url = response.json()['data'][0]['url']
-    image_response = requests.get(image_url)
-    return Image.open(BytesIO(image_response.content))
+
+    image_b64 = response.json()["data"][0]["b64_json"]
+    image_bytes = BytesIO(base64.b64decode(image_b64))
+    return Image.open(image_bytes)
 
 
-
-
+# 随机图像风格列表
 style_list = [
     "Studio Ghibli fantasy style",
     "Surrealism with glowing lights",
@@ -205,14 +169,14 @@ style_list = [
     "Dark gothic oil painting"
 ]
 
+
+# 选取随机图像风格
 def generate_random_dream_image():
     style = random.choice(style_list)
     return generate_dream_image_with_style(style)
 
 
-
 custom_theme = gr.themes.Base()
-
 
 with gr.Blocks(theme=custom_theme, css="""
 @import url('https://fonts.googleapis.com/css2?family=Caveat&display=swap');
@@ -358,21 +322,67 @@ input[type="text"]::placeholder {
 }
 
 
-/* 解决 Dropdown 无法展开的问题 */
+.custom-title {
+    text-align:center;
+    font-size:2.4rem; 
+    background: linear-gradient(90deg, #6c5ce7, #a29bfe);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-family: 'Caveat', cursive;
+    font-weight: 600;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+}
 
+.custom-subtitle{
+    text-align:center;
+    font-size:1.9rem; 
+    background: linear-gradient(90deg, #6c5ce7, #a29bfe);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-family: 'Caveat', cursive;
+    font-weight: 600;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+}
 
+.image-container button {
+    background: rgba(0, 0, 0, 0.4);
+    border: none;
+    padding: none;
+    border-radius: 6px;
+    margin: 0;
+    display: flex;
+    color: #4b5563;
+    border: none;
+    padding: 0;
+    border-radius: 20px;
+    font-size: 16px;
+    transition: none;
+}
+.image-container button:hover {
+    background: none !important;
+    color: inherit !important;
+    box-shadow: none !important;
+    filter: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+    text-decoration: none !important;
+    cursor: default !important;
+
+}
 
 
 """) as demo:
     state = gr.State("chat")
 
     gr.Markdown(
-        "<h1 style='text-align:center; font-size:3rem; color:#fff; margin-top:20px;'>🌙 Whispers of Dreams 🌙</h1>")
+        "<h1 class='custom-title'>🌙 Whispers of Dreams 🌙</h1>")
     gr.Markdown(
-        "<h2 style='text-align:center; font-size:1.5rem; color:#f5f5f5;'>Let your dreams tell their stories...</h2>")
+        "<h2 class='custom-title'>Let your dreams tell their stories...</h2>")
 
     with gr.Column(elem_classes="container fade-in", visible=True) as chat_container:
-        gr.Markdown("<h2 style='text-align:center;'>Let's do some casual chat first~</h2>")
+        gr.Markdown("<h2 class='custom-subtitle'>Let's do some casual chat first</h2>")
         chatbot_chat = gr.Chatbot(
 
             elem_id="chatbox",
@@ -390,8 +400,6 @@ input[type="text"]::placeholder {
             height=650,
             show_label=False,
 
-
-
         )
         with gr.Column(elem_classes="input-container"):
             chat_input = gr.Textbox(placeholder="Type your message here...", label=None, show_label=False, lines=2,
@@ -401,7 +409,7 @@ input[type="text"]::placeholder {
         next_to_dream = gr.Button("Next", elem_id="next-btn")
 
     with gr.Column(elem_classes="container fade-in", visible=False) as dream_container:
-        gr.Markdown("<h2 style='text-align:center;'>Time to describe your dreams</h2>")
+        gr.Markdown("<h2 class='custom-subtitle'>Time to describe your dreams</h2>")
         chatbot_dream = gr.Chatbot(
             elem_id="chatbox",
             value=[{"role": "assistant", "content": "Hello~ I'm Mai Sakurajima!  Makima told me a little about you "
@@ -431,7 +439,7 @@ input[type="text"]::placeholder {
         gr.Markdown("""
             <h2 style="text-align:center; 
                        font-size:2.2rem; 
-                       background: linear-gradient(90deg, #7f8c8d, #95a5a6);
+                       background: linear-gradient(90deg, #6c5ce7, #a29bfe);
                        -webkit-background-clip: text;
                        -webkit-text-fill-color: transparent;
                        font-family: 'Caveat', cursive;
@@ -466,7 +474,11 @@ input[type="text"]::placeholder {
                 btn_gothic = gr.Button("Gothic")
                 btn_random = gr.Button("✨ Random style to generate", variant="secondary")
 
-        output_image = gr.Image()
+        output_image = gr.Image(
+            show_label=False,
+            # show_download_button=False,
+            # show_fullscreen_button=False,
+        )
         back_to_dream = gr.Button("Back to Chat")
 
 
@@ -488,6 +500,7 @@ input[type="text"]::placeholder {
         }
 
 
+    # 提交事件绑定
     chat_send.click(chat_with_ai, inputs=[chat_input, chatbot_chat, state],
                     outputs=[chatbot_chat, chatbot_chat, chat_input], queue=True)
     chat_input.submit(chat_with_ai, inputs=[chat_input, chatbot_chat, state],
@@ -499,11 +512,7 @@ input[type="text"]::placeholder {
     dream_input.submit(chat_dream_with_ai, inputs=[dream_input, chatbot_dream, state],
                        outputs=[chatbot_dream, chatbot_dream, dream_input], queue=True)
 
-
-
-
-
-
+    # 下一步与返回 按钮点击事件
     next_to_dream.click(go_next, inputs=state, outputs=state)
     next_to_generate.click(go_next, inputs=state, outputs=state)
     back_to_chat.click(go_back, inputs=state, outputs=state)
@@ -511,9 +520,7 @@ input[type="text"]::placeholder {
 
     state.change(fn=control_visibility, inputs=state, outputs=[chat_container, dream_container, generate_container])
 
-
-
-
+    # 生成图像按钮点击事件
     btn_ghibli.click(generate_dream_image_with_style, inputs=[gr.State("Studio Ghibli fantasy style")],
                      outputs=output_image)
     btn_surreal.click(generate_dream_image_with_style, inputs=[gr.State("Surrealism with glowing lights")],
@@ -525,12 +532,5 @@ input[type="text"]::placeholder {
                      outputs=output_image)
     btn_random.click(generate_random_dream_image, outputs=output_image)
 
-
-
-
-
-
-
-
-
+# 运行 Gradio 应用
 demo.launch(inbrowser=True)

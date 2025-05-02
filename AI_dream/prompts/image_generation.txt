@@ -1,0 +1,14 @@
+Based on the dream description below, extract suitable English keywords to be used for artistic image generation.
+Your task is to generate a prompt that:
+- Describes a surreal, dreamlike environment
+- Is suitable for a digital painting
+- Includes visual elements like soft lights, floating elements, starry skies, etc.
+- Uses consistent art style: {style}
+
+Dream content:
+{dream}
+
+Return the result in this format:
+"a surreal landscape with floating islands and purple skies, glowing butterflies, fantasy forest, dreamy atmosphere, {style}"
+
+Only return one sentence in English.
