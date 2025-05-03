@@ -19,7 +19,7 @@ from jinja2 import Environment, FileSystemLoader
 
 load_dotenv()
 
-llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-3.5-turbo", streaming=True, temperature=0.7)
+llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4", streaming=True, temperature=0.9)
 
 # 加载模板目录
 env = Environment(loader=FileSystemLoader("prompts"))
@@ -106,7 +106,7 @@ async def chat_dream_with_ai(user_input, history, phase):
     retrieved_context = "\n\n".join([doc.page_content for doc in results])
 
     # 判断梦是否太短
-    is_dream_short = len(full_dream.strip().split()) < 25
+    is_dream_short = len(full_dream.strip().split()) < 20
 
     # 根据梦境长度选择提示词链
     if is_dream_short:
