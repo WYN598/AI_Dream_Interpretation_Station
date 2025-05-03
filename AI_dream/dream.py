@@ -15,44 +15,39 @@ import asyncio
 from jinja2 import Environment, FileSystemLoader
 
 
-
-
 load_dotenv()
 
 llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4", streaming=True, temperature=0.9)
 
-# 加载模板目录
+# 加载prompt目录
 env = Environment(loader=FileSystemLoader("prompts"))
 template = env.get_template("mai_interpret.txt")
 
+# 初始化对话历史
 chat_history = []
 dream_history = []
-
-
 
 # 函数用于读取 prompts
 def load_prompt(path: str) -> ChatPromptTemplate:
     with open(path, "r", encoding="utf-8") as f:
         return ChatPromptTemplate.from_template(f.read())
 
-
+# 第一阶段，聊天chain
 first_prompt = load_prompt("prompts/makima_chat.txt")
 chatbot_chain = first_prompt | llm
 
-# interpret_prompt = load_prompt("prompts/mai_interpret.txt")
-# interpret_chain = interpret_prompt | llm
-
+# 第二阶段 解梦chain
 interpret_prompt = load_prompt("prompts/mai_interpret.txt")
 interpret_short_prompt = load_prompt("prompts/interpret_short.txt")
 interpret_chain = interpret_prompt | llm
 interpret_short_chain = interpret_short_prompt | llm
 
 
-
+# 第三阶段 生成图像chain
 generate_prompt = load_prompt("prompts/image_generation.txt")
 generate_chain = generate_prompt | llm
 
-
+# 聊天函数chat_with_ai
 async def chat_with_ai(user_input, history, phase):
     if history is None:
         history = []
@@ -100,15 +95,23 @@ async def chat_dream_with_ai(user_input, history, phase):
     embedding = OpenAIEmbeddings(model="text-embedding-3-large")
     db = FAISS.load_local("faiss_psych_db", embedding, allow_dangerous_deserialization=True)
 
-    # 检索心理学参考内容
+    # 检索心理学参考内容 + 得分
     query = f"{full_dream} {full_chat}"
-    results = db.similarity_search(query, k=3)
-    retrieved_context = "\n\n".join([doc.page_content for doc in results])
+    results = db.similarity_search_with_score(query, k=3)
+
+    # 设置匹配阈值
+    SIMILARITY_THRESHOLD = 1.3
+    filtered_results = [doc for doc, score in results if score < SIMILARITY_THRESHOLD]
+
+    if filtered_results:
+        retrieved_context = "\n\n".join([doc.page_content for doc in filtered_results])
+    else:
+        retrieved_context = ""  # 匹配度太低，不引用任何文献
 
     # 判断梦是否太短
     is_dream_short = len(full_dream.strip().split()) < 20
 
-    # 根据梦境长度选择提示词链
+    # 选择 prompt 链
     if is_dream_short:
         response = interpret_short_chain.invoke({})
     else:
@@ -126,11 +129,10 @@ async def chat_dream_with_ai(user_input, history, phase):
 
     user_message = {"role": "user", "content": user_input}
     assistant_message = {"role": "assistant", "content": ""}
-
     history = history + [user_message, assistant_message]
     partial_text = ""
 
-    # 打字机效果
+    # 打字效果
     for char in interpretation:
         partial_text += char
         new_history = history.copy()
@@ -139,6 +141,7 @@ async def chat_dream_with_ai(user_input, history, phase):
         yield new_history, new_history, gr.update(value="")
 
 
+# 生成图像函数
 def generate_dream_image_with_style(style):
     full_dream = "\n".join(dream_history)
     prompt = generate_chain.invoke({"dream": full_dream, "style": style}).content
@@ -176,6 +179,7 @@ def generate_random_dream_image():
     return generate_dream_image_with_style(style)
 
 
+# Gradio UI
 custom_theme = gr.themes.Base()
 
 with gr.Blocks(theme=custom_theme, css="""
@@ -465,7 +469,7 @@ input[type="text"]::placeholder {
         # 生成风格选择
         with gr.Column():
             with gr.Row():
-                btn_ghibli = gr.Button("Studio Ghibli")
+                btn_ghibli = gr.Button("Fantasy style")
                 btn_surreal = gr.Button("Surrealism")
             with gr.Row():
                 btn_watercolor = gr.Button("Watercolor")

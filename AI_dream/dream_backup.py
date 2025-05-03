@@ -19,7 +19,7 @@ from jinja2 import Environment, FileSystemLoader
 
 load_dotenv()
 
-llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-3.5-turbo", streaming=True, temperature=0.7)
+llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4", streaming=True, temperature=0.9)
 
 # 加载模板目录
 env = Environment(loader=FileSystemLoader("prompts"))
@@ -89,7 +89,10 @@ async def chat_with_ai(user_input, history, phase):
     chat_history.append(f"用户：{user_input}\nMakima：{partial_text}")
 
 
+
+
 # 集成 RAG 检索的 chat_dream_with_ai 函数
+
 async def chat_dream_with_ai(user_input, history, phase):
     # 更新历史
     dream_history.append(user_input)
@@ -100,15 +103,23 @@ async def chat_dream_with_ai(user_input, history, phase):
     embedding = OpenAIEmbeddings(model="text-embedding-3-large")
     db = FAISS.load_local("faiss_psych_db", embedding, allow_dangerous_deserialization=True)
 
-    # 检索心理学参考内容
+    # 检索心理学参考内容 + 得分
     query = f"{full_dream} {full_chat}"
-    results = db.similarity_search(query, k=3)
-    retrieved_context = "\n\n".join([doc.page_content for doc in results])
+    results = db.similarity_search_with_score(query, k=3)
+
+    # 设置匹配阈值
+    SIMILARITY_THRESHOLD = 1.3
+    filtered_results = [doc for doc, score in results if score < SIMILARITY_THRESHOLD]
+
+    if filtered_results:
+        retrieved_context = "\n\n".join([doc.page_content for doc in filtered_results])
+    else:
+        retrieved_context = ""  # 匹配度太低，不引用任何文献
 
     # 判断梦是否太短
-    is_dream_short = len(full_dream.strip().split()) < 25
+    is_dream_short = len(full_dream.strip().split()) < 20
 
-    # 根据梦境长度选择提示词链
+    # 选择 prompt 链
     if is_dream_short:
         response = interpret_short_chain.invoke({})
     else:
@@ -126,17 +137,19 @@ async def chat_dream_with_ai(user_input, history, phase):
 
     user_message = {"role": "user", "content": user_input}
     assistant_message = {"role": "assistant", "content": ""}
-
     history = history + [user_message, assistant_message]
     partial_text = ""
 
-    # 打字机效果
+    # 打字效果
     for char in interpretation:
         partial_text += char
         new_history = history.copy()
         new_history[-1] = {"role": "assistant", "content": partial_text}
         await asyncio.sleep(0.02)
         yield new_history, new_history, gr.update(value="")
+
+
+
 
 
 def generate_dream_image_with_style(style):
@@ -465,7 +478,7 @@ input[type="text"]::placeholder {
         # 生成风格选择
         with gr.Column():
             with gr.Row():
-                btn_ghibli = gr.Button("Studio Ghibli")
+                btn_ghibli = gr.Button("Fantasy style")
                 btn_surreal = gr.Button("Surrealism")
             with gr.Row():
                 btn_watercolor = gr.Button("Watercolor")

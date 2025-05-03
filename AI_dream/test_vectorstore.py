@@ -1,19 +1,43 @@
-# test_vectorstore.py
+# test_vectorstore_with_score.py
+import os
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# 初始化 embedding 模型
 embedding = OpenAIEmbeddings(model="text-embedding-3-large")
 
-# ✅ 加上允许反序列化（你自己构建的数据库是可信的）
-db = FAISS.load_local("faiss_psych_db", embedding, allow_dangerous_deserialization=True)
+# 设置路径
+vectorstore_path = "faiss_psych_db"
 
-query = "a dream about a lot of money"
-results = db.similarity_search(query, k=3)
+# 安全加载数据库
+if not os.path.exists(vectorstore_path):
+    print(f"❌ Vector store `{vectorstore_path}` not found.")
+    exit()
 
+print(f"📦 Loading FAISS vector store from `{vectorstore_path}/`...")
+db = FAISS.load_local(vectorstore_path, embedding, allow_dangerous_deserialization=True)
 
-print("🔍 Searching for:", query)
-print("🔍 Top 3 matching chunks:")
-for i, doc in enumerate(results):
-    print(f"\n--- Result {i+1} ---\n{doc.page_content[:500]}")
+# 用户输入查询
+query = input("Describe your dream: ").strip()
+if not query:
+    print(" Query is empty. Exiting.")
+    exit()
+
+# 相似度搜索 + 分数
+results = db.similarity_search_with_score(query, k=3)
+
+# 输出结果
+print(f"\n🔍 Searching for: {query}")
+print(f"Top {len(results)} results with similarity scores:\n")
+
+if results:
+    for i, (doc, score) in enumerate(results, 1):
+        print(f"--- Result {i} ---")
+        print(f"Score: {score:.4f}")
+        print(doc.page_content[:500])
+        print("-" * 40)
+else:
+    print("⚠️ No results found.")
